@@ -1,0 +1,12 @@
+# OS files (macOS, and Windows on the org laptop)
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and agent local state
+.vscode/
+.idea/
+.obsidian/
+.superpowers/
+.wayfinder/
+.claude/settings.local.json

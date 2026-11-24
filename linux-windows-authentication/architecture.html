@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Windows Authentication Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper: #f5f5f5;
+      --color-ink: #2d3142;
+      --color-muted: #4f5d75;
+      --color-soft: #5a6580;
+      --color-rule: rgba(45,49,66,0.12);
+      --color-accent: #bf4520;
+      --color-link: #2e5aa8;
+      --font-sans: 'Geist', system-ui, sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif', 'Times New Roman', serif;
+      --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+    }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink); padding: 3rem 2rem; }
+    .container { max-width: 1340px; margin: 0 auto; }
+    .header { margin-bottom: 2.5rem; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.75rem; }
+    h1 { font-family: var(--font-serif); font-size: clamp(1.75rem, 3vw + 1rem, 2.5rem); font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 0.5rem; }
+    .subtitle { font-size: 1rem; line-height: 1.55; color: var(--color-muted); max-width: 70ch; }
+    .toc { margin-top: 1.25rem; font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-soft); display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+    .toc a { color: var(--color-link); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    section { margin-top: 3.5rem; }
+    h2 { font-family: var(--font-serif); font-weight: 400; font-size: 1.75rem; letter-spacing: -0.01em; margin-bottom: 0.5rem; }
+    .lede { font-size: 0.95rem; line-height: 1.6; color: var(--color-muted); max-width: 80ch; margin-bottom: 1.25rem; }
+    code { font-family: var(--font-mono); font-size: 0.85em; }
+    .diagram-container { overflow-x: auto; }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+    .cards { display: grid; grid-template-columns: 1.1fr 1fr 0.9fr; gap: 1rem; margin-top: 1.25rem; }
+    @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
+    .card { background: #ffffff; border-radius: 6px; border: 1px solid var(--color-rule); padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.875rem; padding-bottom: 0.875rem; border-bottom: 1px solid rgba(45,49,66,0.08); }
+    .card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.ink { background: var(--color-ink); }
+    .card-dot.muted { background: var(--color-muted); }
+    .card-dot.coral { background: var(--color-accent); }
+    .card-dot.link { background: var(--color-link); }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: var(--color-muted); font-size: 0.8125rem; line-height: 1.55; }
+    .card li { margin-bottom: 0.35rem; padding-left: 0.875rem; position: relative; }
+    .card li::before { content: ''; position: absolute; left: 0; top: 0.72em; width: 6px; height: 1px; background: rgba(45,49,66,0.35); }
+    table { width: 100%; border-collapse: collapse; background: #ffffff; border: 1px solid var(--color-rule); border-radius: 6px; font-size: 0.8125rem; }
+    th, td { text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid rgba(45,49,66,0.08); vertical-align: top; }
+    th { font-family: var(--font-mono); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); }
+    td { color: var(--color-ink); }
+    td.muted { color: var(--color-muted); }
+    tr:last-child td { border-bottom: none; }
+    .table-wrap { overflow-x: auto; }
+    .footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid rgba(45,49,66,0.10); font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--color-soft); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <p class="eyebrow">Architecture · PoC · 2026-11-23</p>
+    <h1>Windows Authentication from ROSA to SQL Server</h1>
+    <p class="subtitle">How a Python app in a Linux container on ROSA HCP logs in to SQL Server on EC2 as an Active Directory service account, using Kerberos and a sidecar container. Names such as <code>corp.example.com</code>, <code>sql01</code> and <code>svc-app</code> are placeholders.</p>
+    <nav class="toc">
+      <a href="#overview">1 · End to end</a>
+      <a href="#pod">2 · Inside the pod</a>
+      <a href="#login">3 · One login, step by step</a>
+      <a href="#rotation">4 · Rotating the keytab</a>
+      <a href="#ports">5 · Network flows</a>
+    </nav>
+  </div>
+
+  <section id="overview">
+    <h2>1 · End to end: what talks to what</h2>
+    <p class="lede">Every arrow is a connection the pod opens, plus two set up by the platform (the keytab mount and the domain membership of SQL Server). Three leave the cluster: DNS to resolve AD names, Kerberos on port 88 to the domain controllers, and the database connection on port 1433. The AD domain is not chosen yet, so the right-hand zone stands for either variant.</p>
+    <div class="diagram-container">
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-overview-title architecture-overview-desc">
+<title id="architecture-overview-title">Windows Authentication: end-to-end architecture</title>
+<desc id="architecture-overview-desc">A pod on ROSA HCP gets a Kerberos ticket from the AD domain controllers on port 88, resolves AD names through a Route 53 Resolver rule, and logs in to SQL Server on EC2 on port 1433. Badges mark what already exists, what is built for this, and what is still to decide.</desc>
+<defs><marker id="architecture-overview-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="architecture-overview-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker><marker id="architecture-overview-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="architecture-overview-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="40" y="72" width="360" height="544" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="52" y="76" width="188" height="12" rx="2" fill="#f5f5f5"/>
+<text x="58" y="85" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">ROSA HCP CLUSTER · WORKER SUBNETS</text>
+<rect x="800" y="72" width="440" height="544" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="812" y="76" width="164" height="12" rx="2" fill="#f5f5f5"/>
+<text x="818" y="85" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">AD DOMAIN · CORP.EXAMPLE.COM</text>
+<path d="M 200,192 L 200,268" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+<rect x="208" y="224" width="48" height="12" rx="2" fill="#f5f5f5"/>
+<text x="232" y="233" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KEYTAB</text>
+<path d="M 200,364 L 200,476" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+<rect x="208" y="414" width="48" height="12" rx="2" fill="#f5f5f5"/>
+<text x="232" y="423" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">LOOKUP</text>
+<path d="M 320,508 L 480,508" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+<rect x="364" y="488" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="400" y="497" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">FORWARD :53</text>
+<path d="M 720,508 H 1012 Q 1020,508 1020,500 V 372" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+<rect x="826" y="488" width="68" height="12" rx="2" fill="#f5f5f5"/>
+<text x="860" y="497" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">AD DNS :53</text>
+<path d="M 320,332 L 880,332" fill="none" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-overview-arrow-accent)"/>
+<rect x="560" y="312" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="600" y="321" fill="#bf4520" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KERBEROS :88</text>
+<path d="M 320,300 H 432 Q 440,300 440,292 V 160 Q 440,152 448,152 H 880" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-overview-arrow-link)"/>
+<rect x="628" y="132" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="660" y="141" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">TDS :1433</text>
+<path d="M 1020,192 L 1020,292" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#architecture-overview-arrow)"/>
+<rect x="1028" y="236" width="48" height="12" rx="2" fill="#f5f5f5"/>
+<text x="1052" y="245" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">JOINED</text>
+<rect x="80" y="112" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="112" width="240" height="80" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="88" y="118" width="40" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+<text x="108" y="127" fill="#4f5d75" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SECRET</text>
+<text x="200" y="148" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Keytab Secret</text>
+<text x="200" y="163" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">svc-app.keytab · AES keys</text>
+<text x="200" y="177" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">PoC: OpenShift Secret</text>
+<rect x="256" y="118" width="56" height="12" rx="2" fill="#f5f5f5" stroke="#2e5aa8" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="284" y="127" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TO DECIDE</text>
+<rect x="80" y="268" width="240" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="268" width="240" height="96" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<rect x="88" y="274" width="28" height="12" rx="2" fill="none" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+<text x="102" y="283" fill="#bf4520" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">POD</text>
+<text x="200" y="304" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">App pod</text>
+<text x="200" y="319" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">app: Python, pyodbc, ODBC 18</text>
+<text x="200" y="333" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">sidecar: kinit -kt every hour</text>
+<text x="200" y="347" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">ticket: emptyDir in memory</text>
+<rect x="284" y="274" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="298" y="283" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<rect x="80" y="476" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="476" width="240" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="88" y="482" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+<text x="102" y="491" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">DNS</text>
+<text x="200" y="512" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Cluster DNS</text>
+<text x="200" y="527" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">OpenShift DNS Operator</text>
+<rect x="272" y="482" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="292" y="491" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<rect x="480" y="476" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="480" y="476" width="240" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="488" y="482" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+<text x="502" y="491" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">AWS</text>
+<text x="600" y="512" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Route 53 Resolver</text>
+<text x="600" y="527" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">rule: corp.example.com</text>
+<rect x="656" y="482" width="56" height="12" rx="2" fill="#f5f5f5" stroke="#2e5aa8" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="684" y="491" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TO DECIDE</text>
+<rect x="880" y="112" width="280" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="880" y="112" width="280" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="888" y="118" width="20" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="898" y="127" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+<text x="1020" y="148" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">SQL Server on EC2</text>
+<text x="1020" y="163" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">sql01.corp.example.com:1433</text>
+<text x="1020" y="177" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">new login: CORP\svc-app</text>
+<rect x="1112" y="118" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="1132" y="127" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<rect x="880" y="292" width="280" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="880" y="292" width="280" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="888" y="298" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="902" y="307" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">KDC</text>
+<text x="1020" y="328" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Domain controllers</text>
+<text x="1020" y="343" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Kerberos :88 · DNS :53</text>
+<text x="1020" y="357" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">new account: CORP\svc-app</text>
+<rect x="1112" y="298" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="1132" y="307" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<text x="60" y="580" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">The keytab mounts into the sidecar only;</text>
+<text x="60" y="600" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">the app reads the ticket file.</text>
+<text x="820" y="560" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">To decide: where the domain controllers sit.</text>
+<text x="820" y="580" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">In the data center: Transit Gateway, then</text>
+<text x="820" y="600" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Direct Connect or VPN. In AWS: VPC routing.</text>
+<line x1="40" y1="636" x2="1240" y2="636" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="660" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="652" width="14" height="10" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<text x="136" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">App pod (focal)</text>
+<rect x="256" y="652" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="280" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Server you call</text>
+<rect x="400" y="652" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="424" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Platform service</text>
+<rect x="544" y="652" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="568" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Secret</text>
+<line x1="688" y1="657" x2="706" y2="657" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-overview-arrow-accent)"/>
+<text x="712" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Kerberos :88</text>
+<line x1="832" y1="657" x2="850" y2="657" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-overview-arrow-link)"/>
+<text x="856" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">TDS :1433</text>
+<line x1="976" y1="657" x2="994" y2="657" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+<text x="1000" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">DNS or mount</text>
+<line x1="1120" y1="657" x2="1138" y2="657" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-overview-arrow)"/>
+<text x="1144" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Domain joined</text>
+<rect x="112" y="679" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="132" y="688" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<text x="160" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Already in place</text>
+<rect x="256" y="679" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="270" y="688" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<text x="292" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Built for this</text>
+<rect x="400" y="679" width="56" height="12" rx="2" fill="#f5f5f5" stroke="#2e5aa8" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="428" y="688" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TO DECIDE</text>
+<text x="464" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Open decision</text>
+</svg>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><span class="card-dot coral"></span><h3>Inside ROSA HCP</h3></div>
+        <ul>
+          <li>The app pod holds two containers: the Python app and a Kerberos sidecar.</li>
+          <li>The keytab Secret is mounted into the sidecar only.</li>
+          <li>Cluster DNS answers cluster names and passes the rest upstream to the VPC resolver.</li>
+          <li>Pod traffic leaves with the worker node's IP, which changes. Firewalls allow the worker subnets, or a fixed EgressIP.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot link"></span><h3>In AWS</h3></div>
+        <ul>
+          <li>A Route 53 Resolver rule sends <code>corp.example.com</code> queries to the AD DNS servers. The cluster needs no change.</li>
+          <li>SQL Server runs on EC2, joined to the domain, on static port 1433.</li>
+          <li>Its security group must allow 1433 from the worker subnets.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot ink"></span><h3>In Active Directory</h3></div>
+        <ul>
+          <li>Domain controllers run the KDC on port 88, and usually DNS on 53.</li>
+          <li>Variant A: corporate DCs over Transit Gateway and Direct Connect or VPN.</li>
+          <li>Variant B: AWS Managed Microsoft AD in a peered VPC.</li>
+          <li>The service account lives in SQL Server's domain, so there is no cross-realm step.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="pod">
+    <h2>2 · Inside the pod</h2>
+    <p class="lede">On Windows the operating system handles Kerberos for you; here two containers do it by hand. One container owns the secret and keeps a ticket fresh; the other only reads that ticket. The left zone holds the OpenShift objects the pod mounts.</p>
+    <div class="diagram-container">
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-pod-title architecture-pod-desc">
+<title id="architecture-pod-title">Inside the pod: Kerberos sidecar and app container</title>
+<desc id="architecture-pod-desc">The sidecar mounts the keytab, gets tickets from the domain controller and writes them to an in-memory volume that the app container reads before logging in to SQL Server. Badges mark what already exists, what is built for this, and what is still to decide.</desc>
+<defs><marker id="architecture-pod-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="architecture-pod-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker><marker id="architecture-pod-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="architecture-pod-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="40" y="72" width="280" height="436" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="52" y="76" width="92" height="12" rx="2" fill="#f5f5f5"/>
+<text x="58" y="85" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">PROJECT OBJECTS</text>
+<rect x="380" y="72" width="480" height="436" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="392" y="76" width="184" height="12" rx="2" fill="#f5f5f5"/>
+<text x="398" y="85" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">POD · ONE UID FOR ALL CONTAINERS</text>
+<rect x="920" y="72" width="320" height="436" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<rect x="932" y="76" width="60" height="12" rx="2" fill="#f5f5f5"/>
+<text x="938" y="85" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">AD DOMAIN</text>
+<path d="M 280,148 L 420,148" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<rect x="326" y="128" width="48" height="12" rx="2" fill="#f5f5f5"/>
+<text x="350" y="137" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KEYTAB</text>
+<path d="M 280,400 H 332 Q 340,400 340,392 V 180 Q 340,172 348,172 H 420" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<rect x="348" y="280" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="380" y="289" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KRB5.CONF</text>
+<path d="M 280,424 L 420,424" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<path d="M 540,200 L 540,248" fill="none" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-pod-arrow-accent)"/>
+<rect x="548" y="218" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="588" y="227" fill="#bf4520" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">WRITE TICKET</text>
+<path d="M 540,328 L 540,376" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<rect x="548" y="346" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="584" y="355" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">READ TICKET</text>
+<path d="M 660,148 L 960,148" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<rect x="774" y="128" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="810" y="137" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">GET TGT :88</text>
+<path d="M 660,404 H 892 Q 900,404 900,396 V 180 Q 900,172 908,172 H 960" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<rect x="734" y="384" width="92" height="12" rx="2" fill="#f5f5f5"/>
+<text x="780" y="393" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">SVC TICKET :88</text>
+<path d="M 660,428 L 960,428" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-pod-arrow-link)"/>
+<rect x="748" y="436" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="780" y="445" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">TDS :1433</text>
+<rect x="80" y="116" width="200" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="116" width="200" height="80" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="88" y="122" width="40" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+<text x="108" y="131" fill="#4f5d75" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SECRET</text>
+<text x="180" y="152" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Keytab Secret</text>
+<text x="180" y="167" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">svc-app.keytab</text>
+<text x="180" y="181" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">PoC: OpenShift Secret</text>
+<rect x="216" y="122" width="56" height="12" rx="2" fill="#f5f5f5" stroke="#2e5aa8" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="244" y="131" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TO DECIDE</text>
+<rect x="80" y="380" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="380" width="200" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="88" y="386" width="20" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+<text x="98" y="395" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">CM</text>
+<text x="180" y="416" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">ConfigMap</text>
+<text x="180" y="431" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">krb5.conf</text>
+<rect x="244" y="386" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="258" y="395" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<rect x="420" y="120" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="420" y="120" width="240" height="80" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<rect x="428" y="126" width="48" height="12" rx="2" fill="none" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+<text x="452" y="135" fill="#bf4520" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SIDECAR</text>
+<text x="540" y="156" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Kerberos sidecar</text>
+<text x="540" y="171" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">kinit -kt keytab, every 1h</text>
+<text x="540" y="185" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">native sidecar: starts first</text>
+<rect x="624" y="126" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="638" y="135" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<rect x="420" y="248" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="420" y="248" width="240" height="80" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="428" y="254" width="28" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+<text x="442" y="263" fill="#4f5d75" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">VOL</text>
+<text x="540" y="284" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Ticket cache</text>
+<text x="540" y="299" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">emptyDir, medium: Memory</text>
+<text x="540" y="313" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">FILE:/var/kerberos-ccache/cache</text>
+<rect x="624" y="254" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="638" y="263" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<rect x="420" y="376" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="420" y="376" width="240" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="428" y="382" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="442" y="391" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="540" y="412" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">App container</text>
+<text x="540" y="427" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Python, pyodbc, ODBC 18</text>
+<text x="540" y="441" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">KRB5CCNAME points at cache</text>
+<rect x="624" y="382" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="638" y="391" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<rect x="960" y="120" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="960" y="120" width="240" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="968" y="126" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="982" y="135" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">KDC</text>
+<text x="1080" y="156" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Domain controller</text>
+<text x="1080" y="171" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Kerberos :88</text>
+<text x="1080" y="185" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">TGT and service tickets</text>
+<rect x="1152" y="126" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="1172" y="135" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<rect x="960" y="376" width="240" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="960" y="376" width="240" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="968" y="382" width="20" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="978" y="391" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+<text x="1080" y="412" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">SQL Server</text>
+<text x="1080" y="427" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">sql01.corp.example.com</text>
+<text x="1080" y="441" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">TCP :1433</text>
+<rect x="1152" y="382" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="1172" y="391" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<text x="40" y="556" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">The keytab never enters the app container. Both containers keep the same UID because</text>
+<text x="40" y="576" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">MIT Kerberos creates the ticket file with mode 0600.</text>
+<text x="40" y="604" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">To decide with the platform team: native sidecar (stable from Kubernetes 1.33) or the init-container fallback.</text>
+<line x1="40" y1="636" x2="1240" y2="636" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="660" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="112" y="652" width="14" height="10" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<text x="136" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Sidecar (focal)</text>
+<rect x="256" y="652" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="280" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Container or server</text>
+<rect x="400" y="652" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="424" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Secret or volume</text>
+<rect x="544" y="652" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="568" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Config object</text>
+<line x1="688" y1="657" x2="706" y2="657" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-pod-arrow-accent)"/>
+<text x="712" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Ticket write</text>
+<line x1="832" y1="657" x2="850" y2="657" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-pod-arrow-link)"/>
+<text x="856" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">TDS :1433</text>
+<line x1="976" y1="657" x2="994" y2="657" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-pod-arrow)"/>
+<text x="1000" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Mount or :88</text>
+<rect x="112" y="679" width="40" height="12" rx="2" fill="rgba(45,49,66,0.07)" stroke="none" stroke-width="0.8"/>
+<text x="132" y="688" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">EXISTS</text>
+<text x="160" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Already in place</text>
+<rect x="256" y="679" width="28" height="12" rx="2" fill="#f5f5f5" stroke="#2d3142" stroke-width="0.8"/>
+<text x="270" y="688" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">NEW</text>
+<text x="292" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Built for this</text>
+<rect x="400" y="679" width="56" height="12" rx="2" fill="#f5f5f5" stroke="#2e5aa8" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="428" y="688" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TO DECIDE</text>
+<text x="464" y="689" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Open decision</text>
+</svg>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><span class="card-dot coral"></span><h3>Kerberos sidecar</h3></div>
+        <ul>
+          <li>Mounts the keytab and <code>krb5.conf</code>; runs <code>kinit -kt</code> every hour.</li>
+          <li>AD tickets last 10 hours by default, so an hourly refresh leaves a wide margin.</li>
+          <li>As a native sidecar (init container with <code>restartPolicy: Always</code>) it starts before the app and stops after it.</li>
+          <li>Image: UBI plus <code>krb5-workstation</code> for <code>kinit</code> and <code>klist</code>.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot muted"></span><h3>Ticket cache</h3></div>
+        <ul>
+          <li>An <code>emptyDir</code> with <code>medium: Memory</code>, so the ticket never touches disk.</li>
+          <li>Both containers set <code>KRB5CCNAME=FILE:/var/kerberos-ccache/cache</code>. The RHEL default <code>KEYRING:</code> cache is the wrong type for sharing.</li>
+          <li>MIT Kerberos writes the file as 0600, so both containers must keep the same UID.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot ink"></span><h3>App container</h3></div>
+        <ul>
+          <li>Python, pyodbc, unixODBC, ODBC Driver 18 and the MIT Kerberos libraries.</li>
+          <li><code>Trusted_Connection=yes</code> with the server's FQDN, and no <code>UID</code> or <code>PWD</code>.</li>
+          <li>Never sees the keytab. It asks the KDC for the SQL Server ticket itself, using the TGT from the cache.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="login">
+    <h2>3 · One login, step by step</h2>
+    <p class="lede">Nine messages in three phases: the sidecar gets a ticket-granting ticket, the app trades it for a ticket addressed to SQL Server, and SQL Server checks that ticket with its own key. The password never crosses the network.</p>
+    <div class="diagram-container">
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-login-title architecture-login-desc">
+<title id="architecture-login-title">One Kerberos login from the pod to SQL Server</title>
+<desc id="architecture-login-desc">The sidecar gets a ticket-granting ticket and stores it, the app exchanges it for a SQL Server service ticket, and SQL Server checks that ticket with its own key and accepts the login.</desc>
+<defs><marker id="architecture-login-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="architecture-login-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker><marker id="architecture-login-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="architecture-login-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<line x1="136" y1="96" x2="136" y2="560" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="368" y1="96" x2="368" y2="560" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="600" y1="96" x2="600" y2="560" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="832" y1="96" x2="832" y2="560" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1064" y1="96" x2="1064" y2="560" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="96" y="128" width="544" height="164" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<rect x="96" y="128" width="40" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<text x="116" y="140" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.12em">LOOP</text>
+<text x="108" y="160" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.04em">[every hour]</text>
+<rect x="132" y="176" width="8" height="96" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="364" y="176" width="8" height="56" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="364" y="360" width="8" height="56" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="828" y="320" width="8" height="216" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="1060" y="440" width="8" height="96" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<path d="M 140,184 L 364,184" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<rect x="212" y="164" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="173" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">1 AS-REQ :88</text>
+<path d="M 364,224 L 140,224" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-login-arrow)"/>
+<rect x="218" y="204" width="68" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="213" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">2 TGT, 10H</text>
+<path d="M 140,264 L 600,264" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<rect x="216" y="244" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="253" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">3 WRITE TGT</text>
+<path d="M 828,328 L 600,328" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<rect x="682" y="308" width="68" height="12" rx="2" fill="#f5f5f5"/>
+<text x="716" y="317" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">4 READ TGT</text>
+<path d="M 828,368 L 372,368" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<rect x="674" y="348" width="84" height="12" rx="2" fill="#f5f5f5"/>
+<text x="716" y="357" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">5 TGS-REQ :88</text>
+<path d="M 372,408 L 828,408" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-login-arrow)"/>
+<rect x="444" y="388" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="484" y="397" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">6 SVC TICKET</text>
+<path d="M 836,448 L 1060,448" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-login-arrow-link)"/>
+<rect x="912" y="428" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="948" y="437" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">7 TDS LOGIN</text>
+<path d="M 1068,472 H 1100 Q 1108,472 1108,480 V 488 Q 1108,496 1100,496 H 1068" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<rect x="1116" y="478" width="92" height="12" rx="2" fill="#f5f5f5"/>
+<text x="1162" y="487" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">8 CHECK TICKET</text>
+<path d="M 1060,528 L 836,528" fill="none" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-login-arrow-accent)"/>
+<rect x="914" y="508" width="68" height="12" rx="2" fill="#f5f5f5"/>
+<text x="948" y="517" fill="#bf4520" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">9 LOGIN OK</text>
+<rect x="44" y="32" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="44" y="32" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="52" y="38" width="48" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="76" y="47" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SIDECAR</text>
+<text x="136" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Kerberos sidecar</text>
+<text x="136" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">kinit -kt keytab</text>
+<rect x="276" y="32" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="276" y="32" width="184" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="284" y="38" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+<text x="298" y="47" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">KDC</text>
+<text x="368" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Domain controller</text>
+<text x="368" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Kerberos :88</text>
+<rect x="508" y="32" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="508" y="32" width="184" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="516" y="38" width="28" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+<text x="530" y="47" fill="#4f5d75" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">VOL</text>
+<text x="600" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Ticket cache</text>
+<text x="600" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">FILE: in memory</text>
+<rect x="740" y="32" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="740" y="32" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="748" y="38" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="762" y="47" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="832" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">App container</text>
+<text x="832" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">pyodbc + ODBC 18</text>
+<rect x="972" y="32" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="972" y="32" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="980" y="38" width="20" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="990" y="47" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+<text x="1064" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">SQL Server</text>
+<text x="1064" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">sql01 :1433</text>
+<text x="40" y="592" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Steps 1 to 3 repeat every hour, so the cache always holds a valid TGT. After the login,</text>
+<text x="40" y="612" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">sys.dm_exec_connections shows auth_scheme = KERBEROS for the session.</text>
+<line x1="40" y1="636" x2="1240" y2="636" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="660" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">LEGEND</text>
+<line x1="112" y1="657" x2="130" y2="657" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-login-arrow)"/>
+<text x="136" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Request</text>
+<line x1="256" y1="657" x2="274" y2="657" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-login-arrow)"/>
+<text x="280" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Reply</text>
+<line x1="400" y1="657" x2="418" y2="657" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-login-arrow-link)"/>
+<text x="424" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">TDS login</text>
+<line x1="544" y1="657" x2="562" y2="657" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-login-arrow-accent)"/>
+<text x="568" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Login accepted</text>
+<rect x="688" y="652" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<text x="712" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Loop</text>
+<rect x="835" y="650" width="8" height="14" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<text x="856" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Actor busy</text>
+</svg>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><span class="card-dot muted"></span><h3>Steps 1 to 3: the TGT</h3></div>
+        <ul>
+          <li>The sidecar proves it holds svc-app's key by sending a timestamp encrypted with it (pre-authentication).</li>
+          <li>The KDC answers with a TGT valid for about 10 hours.</li>
+          <li>The sidecar writes it to the shared cache and repeats every hour.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot ink"></span><h3>Steps 4 to 6: the service ticket</h3></div>
+        <ul>
+          <li>The ODBC driver builds the SPN <code>MSSQLSvc/sql01.corp.example.com:1433</code> from the server name.</li>
+          <li>The KDC encrypts the ticket with the key of the account that owns that SPN.</li>
+          <li>A missing or duplicate SPN fails here, with no NTLM fallback on Linux.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot coral"></span><h3>Steps 7 to 9: the login</h3></div>
+        <ul>
+          <li>The ticket travels inside the TDS login packet.</li>
+          <li>SQL Server decrypts it with its own key and maps it to <code>CORP\svc-app</code>. It may still ask a DC for group data, but it does not need the KDC to accept the ticket.</li>
+          <li>To confirm, check that <code>auth_scheme</code> reads <code>KERBEROS</code>.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="rotation">
+    <h2>4 · Rotating the keytab</h2>
+    <p class="lede">A keytab holds keys derived from the account password. Change the password and every copy of the old keytab stops working, so rotation follows a fixed order: new keys first, password second.</p>
+    <div class="diagram-container">
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-rotation-title architecture-rotation-desc">
+<title id="architecture-rotation-title">Rotating the keytab without an outage</title>
+<desc id="architecture-rotation-desc">The AD team adds next-version keys to the keytab and updates the Secret before changing the password, so the sidecar keeps getting tickets throughout.</desc>
+<defs><marker id="architecture-rotation-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="architecture-rotation-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker><marker id="architecture-rotation-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="architecture-rotation-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<line x1="184" y1="96" x2="184" y2="536" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="488" y1="96" x2="488" y2="536" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="792" y1="96" x2="792" y2="536" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1096" y1="96" x2="1096" y2="536" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<path d="M 184,136 H 216 Q 224,136 224,144 V 152 Q 224,160 216,160 H 184" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="232" y="142" width="92" height="12" rx="2" fill="#f5f5f5"/>
+<text x="278" y="151" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">BUILD KVNO N+1</text>
+<path d="M 184,208 L 488,208" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="294" y="188" width="84" height="12" rx="2" fill="#f5f5f5"/>
+<text x="336" y="197" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">UPLOAD KEYTAB</text>
+<path d="M 488,248 L 792,248" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-rotation-arrow-open)"/>
+<rect x="600" y="228" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="640" y="237" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">FILE UPDATED</text>
+<path d="M 792,288 L 1096,288" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="902" y="268" width="84" height="12" rx="2" fill="#f5f5f5"/>
+<text x="944" y="277" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KINIT, KVNO N</text>
+<path d="M 1096,328 L 792,328" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="928" y="308" width="32" height="12" rx="2" fill="#f5f5f5"/>
+<text x="944" y="317" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">TGT</text>
+<path d="M 184,376 L 1096,376" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="296" y="356" width="80" height="12" rx="2" fill="#f5f5f5"/>
+<text x="336" y="365" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">SET PASSWORD</text>
+<path d="M 792,416 L 1096,416" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="902" y="396" width="84" height="12" rx="2" fill="#f5f5f5"/>
+<text x="944" y="405" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">KINIT N+1 KEY</text>
+<path d="M 1096,456 L 792,456" fill="none" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow-accent)"/>
+<rect x="918" y="436" width="52" height="12" rx="2" fill="#f5f5f5"/>
+<text x="944" y="445" fill="#bf4520" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">NEW TGT</text>
+<path d="M 184,504 L 488,504" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<rect x="300" y="484" width="72" height="12" rx="2" fill="#f5f5f5"/>
+<text x="336" y="493" fill="#5a6580" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.06em">DROP KVNO N</text>
+<rect x="84" y="32" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="84" y="32" width="200" height="64" rx="6" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+<rect x="92" y="38" width="32" height="12" rx="2" fill="none" stroke="rgba(90,101,128,0.40)" stroke-width="0.8"/>
+<text x="108" y="47" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">TEAM</text>
+<text x="184" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">AD team</text>
+<text x="184" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">ktpass, password, kvno</text>
+<rect x="388" y="32" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="388" y="32" width="200" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="396" y="38" width="40" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+<text x="416" y="47" fill="#4f5d75" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SECRET</text>
+<text x="488" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Secret store</text>
+<text x="488" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Secret or Secrets Manager</text>
+<rect x="692" y="32" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="692" y="32" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="700" y="38" width="48" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="724" y="47" fill="#2d3142" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">SIDECAR</text>
+<text x="792" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Kerberos sidecar</text>
+<text x="792" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">kinit every hour</text>
+<rect x="996" y="32" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="996" y="32" width="200" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="1004" y="38" width="28" height="12" rx="2" fill="none" stroke="rgba(45,49,66,0.22)" stroke-width="0.8"/>
+<text x="1018" y="47" fill="#5a6580" font-size="7" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle" letter-spacing="0.08em">KDC</text>
+<text x="1096" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', system-ui, sans-serif" text-anchor="middle">Domain controller</text>
+<text x="1096" y="83" fill="#4f5d75" font-size="9" font-family="'Geist Mono', ui-monospace, Menlo, monospace" text-anchor="middle">Kerberos :88</text>
+<text x="40" y="572" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">If the password changes before the new keytab is in place, kinit fails until the Secret is updated.</text>
+<text x="40" y="592" fill="#5a6580" font-size="14" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', serif">Mounted Secrets refresh in place, but not when mounted with subPath.</text>
+<line x1="40" y1="636" x2="1240" y2="636" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="660" fill="#4f5d75" font-size="8" font-family="'Geist Mono', ui-monospace, Menlo, monospace" letter-spacing="0.14em">LEGEND</text>
+<line x1="112" y1="657" x2="130" y2="657" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow)"/>
+<text x="136" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Action</text>
+<line x1="256" y1="657" x2="274" y2="657" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-rotation-arrow)"/>
+<text x="280" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Reply</text>
+<line x1="400" y1="657" x2="418" y2="657" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#architecture-rotation-arrow-open)"/>
+<text x="424" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">File refresh</text>
+<line x1="544" y1="657" x2="562" y2="657" stroke="#bf4520" stroke-width="1.2" marker-end="url(#architecture-rotation-arrow-accent)"/>
+<text x="568" y="661" fill="#4f5d75" font-size="9" font-family="'Geist', system-ui, sans-serif">Rotation proven</text>
+</svg>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><span class="card-dot coral"></span><h3>Safe order</h3></div>
+        <ul>
+          <li>Build keytab entries for the next kvno and keep the current ones.</li>
+          <li>Update the Secret. The sidecar picks up the new file at its next <code>kinit</code>.</li>
+          <li>Change the password in AD to the value used for the new entries.</li>
+          <li>Remove the old kvno entries once everything works.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot ink"></span><h3>What breaks it</h3></div>
+        <ul>
+          <li>Changing the password first: <code>kinit</code> fails until the new keytab arrives.</li>
+          <li>A 90-day password expiry with no rotation plan.</li>
+          <li>A keytab with only RC4 keys. Domain controllers assume AES-only since the 2026 updates.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-dot muted"></span><h3>Who owns what</h3></div>
+        <ul>
+          <li>AD team: the keytab, the password and the kvno.</li>
+          <li>Platform team: the Secret store and who can read it.</li>
+          <li>Security: a never-expires exception, or the rotation schedule.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="ports">
+    <h2>5 · Network flows</h2>
+    <p class="lede">Source for every row: the ROSA worker subnet CIDRs, or the EgressIP addresses if EgressIP is used.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Destination</th><th>Port</th><th>Protocol</th><th>Needed for</th><th>Required</th></tr></thead>
+        <tbody>
+          <tr><td>Domain controllers (KDC)</td><td><code>88</code></td><td>TCP and UDP</td><td class="muted">Getting tickets. The client tries TCP first with <code>udp_preference_limit = 0</code>.</td><td>Yes</td></tr>
+          <tr><td>AD DNS servers, or the Route 53 Resolver endpoint</td><td><code>53</code></td><td>TCP and UDP</td><td class="muted">Resolving the SQL Server name and the KDC SRV records</td><td>Yes</td></tr>
+          <tr><td>SQL Server on EC2</td><td><code>1433</code></td><td>TCP</td><td class="muted">The database connection (TDS)</td><td>Yes</td></tr>
+          <tr><td>SQL Server on EC2</td><td><code>1434</code></td><td>UDP</td><td class="muted">SQL Browser, only for a named instance with no port in the connection string</td><td>Avoid</td></tr>
+          <tr><td>Domain controllers</td><td><code>464</code></td><td>TCP and UDP</td><td class="muted">Password changes, only if a tool in the cluster rotates the password</td><td>No</td></tr>
+          <tr><td>Domain controllers</td><td><code>389</code> / <code>636</code></td><td>TCP</td><td class="muted">LDAP, only for tools such as adutil or msktutil</td><td>No</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="footer">
+    <span>Source: 02-architecture.md and the research/ notes in this folder</span>
+    <span>2026-11-23</span>
+  </div>
+
+</div>
+</body>
+</html>
